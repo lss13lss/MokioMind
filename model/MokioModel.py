@@ -59,6 +59,7 @@ import math
 import torch.nn as nn
 from typing import Optional, Tuple
 import torch.nn.functional as F
+from transformers.activations import ACT2FN
 
 
 class RMSNorm(nn.Module):
@@ -250,7 +251,7 @@ class Attention(nn.Module):
                 extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
                 extended_attention_mask = (1.0 - extended_attention_mask) * -1e9
                 scores = scores + extended_attention_mask
-                
+
             scores = F.softmax(scores.float(), dim=-1).type_as(xq)
             scores=self.attn_dropout(scores)
             output=scores@xv
@@ -260,3 +261,26 @@ class Attention(nn.Module):
         )
         output=self.resid_dropout(self.o_proj(output))
         return output,past_kv
+
+class FeedForward(nn.Module):
+    def __init__(self, config: MokioMindConfig):
+        super().__init__()
+        if config.intermediate_size is None:
+            intermediate_size = int(config.hidden_size * 8 / 3)
+            config.intermediate_size = 64 * ((intermediate_size + 64 - 1) // 64)
+
+        self.gate_proj = nn.Linear(
+            config.hidden_size, config.intermediate_size, bias=False
+        )
+        self.down_proj = nn.Linear(
+            config.intermediate_size, config.hidden_size, bias=False
+        )
+        self.up_proj = nn.Linear(
+            config.hidden_size, config.intermediate_size, bias=False
+        )
+        self.dropout = nn.Dropout(config.dropout)
+        self.act_fn = ACT2FN[config.hidden_act]
+
+    def forward(self, x):
+        gated = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
+        return self.dropout(self.down_proj(gated))
