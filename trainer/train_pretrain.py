@@ -58,6 +58,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
 
             loss = (loss * loss_mask).sum() / loss_mask.sum()
 
+            loss+=res.aux_loss
+            
             loss = loss / args.accumulation_steps
 
         scaler.scale(loss).backward()
@@ -233,7 +235,7 @@ if __name__ == "__main__":
 
     # 创建MiniMind模型配置
     lm_config = MokioMindConfig(
-        hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers
+        hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers,use_moe=bool(args.use_moe)
     )
 
     # 📚 断点续训知识点
