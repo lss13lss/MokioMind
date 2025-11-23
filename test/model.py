@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Optional, Tuple
 from torch.nn import functional as F
 import math
+from .activations_functions import ACT2FN
 
 class MokioMindConfig(PretrainedConfig):
     model_type = "mokiomind"
@@ -229,3 +230,56 @@ class Attention(nn.Module):
 
 
          
+class FeedForward(nn.Module):
+    def __init__(self, config:MokioMindConfig):
+        super().__init__()
+        if config.intermediate_size is None:
+            config.intermediate_size = int(config.hidden_size * 8 / 3)
+            config.intermediate_size = 64 * ((config.intermediate_size + 63) // 64)
+        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size)
+        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.dropout = nn.Dropout(config.dropout)
+        self.act_fn = ACT2FN[config.hidden_act]
+
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
+        return self.down_proj(self.dropout(self.act_fn(self.up_proj(x) * self.gate_proj(x))))
+    
+class MokioMindBlock(nn.Module):
+    def __init__(self,layer_id: int, config:MokioMindConfig):
+        super().__init__()
+        self.num_attention_heads = config.num_attention_heads
+        self.hidden_size = config.hidden_size
+        self.head_dim = config.hidden_size // config.num_attention_heads
+        self.self_attn = Attention(config)
+
+        self.layer_id = layer_id
+        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.mlp = FeedForward(config)
+
+    
+    def forward(
+        self,
+        hidden_states,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        use_cache=False,
+        attention_mask: Optional[torch.Tensor] = None,
+    ):
+        res = hidden_states
+
+        hidden_states, present_key_value = self.self_attention(
+            self.input_layernorm(hidden_states),  # pre-norm
+            position_embeddings,
+            past_key_value,
+            use_cache,
+            attention_mask,
+        )
+
+        hidden_states = res + hidden_states
+
+        hidden_states = hidden_states + self.mlp(
+            self.post_attention_layernorm(hidden_states)
+        )
+        return hidden_states, present_key_value
