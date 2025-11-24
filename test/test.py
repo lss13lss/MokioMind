@@ -51,3 +51,44 @@ class MHA(nn.Module):  # 定义多头注意力机制(Multi-Head Attention)类，
         
         # 通过输出投影层得到最终结果
         return self.out_proj(attn_output)
+    
+class FFN(nn.Module):
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super().__init__()
+        self.linear1 = nn.Linear(d_model, d_ff)
+        self.linear2 = nn.Linear(d_ff, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = nn.GELU()
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+        x = self.linear2(x)
+        return x
+    
+
+class EncoderLayer(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
+        super().__init__()
+        self.attn = MHA(d_model, num_heads, dropout)  # 多头注意力机制
+        self.ffn = FFN(d_model, d_ff, dropout)  # 前馈神经网络
+        self.norm1 = nn.LayerNorm(d_model)  # 第一个层归一化
+        self.norm2 = nn.LayerNorm(d_model)  # 第二个层归一化
+        self.dropout = nn.Dropout(dropout)  # dropout层，用于残差连接后的正则化
+
+    def forward(self, x, mask=None):
+        # 前归一化架构：先进行层归一化，再进入子模块，最后加上残差连接
+        # 多头注意力子层
+        residual = x  # 保存输入作为残差连接
+        x = self.norm1(x)  # 前归一化：先归一化
+        attn_output = self.attn(x, mask)  # 然后通过多头注意力
+        x = residual + self.dropout(attn_output)  # 残差连接
+        
+        # 前馈网络子层
+        residual = x  # 保存当前状态作为残差连接
+        x = self.norm2(x)  # 前归一化：先归一化
+        ffn_output = self.ffn(x)  # 然后通过前馈网络
+        x = residual + self.dropout(ffn_output)  # 残差连接
+        
+        return x
